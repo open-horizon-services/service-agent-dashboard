@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Container Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+            font-size: 14px;
+        }
+        .header {
+            background: #1e293b;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .header h1 { 
+            font-size: 20px;
+            color: #60a5fa;
+            margin-bottom: 10px;
+        }
+        .system-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            font-size: 12px;
+        }
+        .system-info div {
+            background: #334155;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .system-info span { 
+            color: #94a3b8;
+            display: block;
+            margin-bottom: 4px;
+        }
+        .system-info strong { 
+            color: #60a5fa;
+            font-size: 16px;
+        }
+        .container-grid {
+            display: grid;
+            gap: 15px;
+        }
+        .container-card {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            border-left: 4px solid #64748b;
+        }
+        .container-card.running { border-left-color: #22c55e; }
+        .container-card.exited { border-left-color: #ef4444; }
+        .container-card.paused { border-left-color: #f59e0b; }
+        .container-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .container-name {
+            font-size: 16px;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-running { background: #166534; color: #86efac; }
+        .status-exited { background: #7f1d1d; color: #fca5a5; }
+        .status-paused { background: #78350f; color: #fcd34d; }
+        .container-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .detail-item {
+            background: #334155;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .detail-label {
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .detail-value {
+            color: #e2e8f0;
+            font-weight: 500;
+        }
+        .stats {
+            margin-top: 10px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        .stat-bar {
+            background: #334155;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .progress-bar {
+            height: 6px;
+            background: #1e293b;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #60a5fa);
+            transition: width 0.3s ease;
+        }
+        .progress-fill.high { background: linear-gradient(90deg, #ef4444, #f87171); }
+        .error {
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            .container-details { grid-template-columns: 1fr; }
+            .stats { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🐳 Docker Container Dashboard</h1>
+        <div class="system-info" id="systemInfo">
+            <div><span>Loading...</span></div>
+        </div>
+    </div>
+    
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="loading" class="loading">Loading containers...</div>
+    <div id="containers" class="container-grid"></div>
+
+    <script>
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString();
+        }
+
+        async function fetchSystemInfo() {
+            try {
+                const response = await fetch('/api/system');
+                const data = await response.json();
+                
+                document.getElementById('systemInfo').innerHTML = `
+                    <div><span>Total Containers</span><strong>${data.containers}</strong></div>
+                    <div><span>Running</span><strong style="color: #22c55e">${data.containers_running}</strong></div>
+                    <div><span>Stopped</span><strong style="color: #ef4444">${data.containers_stopped}</strong></div>
+                    <div><span>Images</span><strong>${data.images}</strong></div>
+                    <div><span>CPUs</span><strong>${data.cpus}</strong></div>
+                    <div><span>Memory</span><strong>${formatBytes(data.memory_total)}</strong></div>
+                `;
+            } catch (error) {
+                console.error('Error fetching system info:', error);
+            }
+        }
+
+        async function fetchContainers() {
+            try {
+                const response = await fetch('/api/containers');
+                const data = await response.json();
+                
+                if (data.error) {
+                    document.getElementById('error').textContent = data.error;
+                    document.getElementById('error').style.display = 'block';
+                    document.getElementById('loading').style.display = 'none';
+                    return;
+                }
+
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('loading').style.display = 'none';
+                
+                const containersDiv = document.getElementById('containers');
+                
+                if (data.containers.length === 0) {
+                    containersDiv.innerHTML = '<div class="loading">No containers found</div>';
+                    return;
+                }
+
+                containersDiv.innerHTML = data.containers.map(container => {
+                    const statusClass = container.status.toLowerCase();
+                    const statsHtml = container.stats ? `
+                        <div class="stats">
+                            <div class="stat-bar">
+                                <div class="stat-label">CPU: ${container.stats.cpu_percent}%</div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill ${container.stats.cpu_percent > 80 ? 'high' : ''}" 
+                                         style="width: ${Math.min(container.stats.cpu_percent, 100)}%"></div>
+                                </div>
+                            </div>
+                            <div class="stat-bar">
+                                <div class="stat-label">Memory: ${formatBytes(container.stats.memory_usage)} / ${formatBytes(container.stats.memory_limit)} (${container.stats.memory_percent}%)</div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill ${container.stats.memory_percent > 80 ? 'high' : ''}" 
+                                         style="width: ${Math.min(container.stats.memory_percent, 100)}%"></div>
+                                </div>
+                            </div>
+                        </div>
+                    ` : '';
+
+                    const ports = Object.entries(container.ports || {})
+                        .map(([internal, external]) => external ? `${internal} → ${external[0].HostPort}` : internal)
+                        .join(', ') || 'None';
+
+                    return `
+                        <div class="container-card ${statusClass}">
+                            <div class="container-header">
+                                <div class="container-name">${container.name}</div>
+                                <span class="status-badge status-${statusClass}">${container.status}</span>
+                            </div>
+                            <div class="container-details">
+                                <div class="detail-item">
+                                    <div class="detail-label">ID</div>
+                                    <div class="detail-value">${container.id}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Image</div>
+                                    <div class="detail-value">${container.image}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Ports</div>
+                                    <div class="detail-value">${ports}</div>
+                                </div>
+                                <div class="detail-item">
+                                    <div class="detail-label">Created</div>
+                                    <div class="detail-value">${formatDate(container.created)}</div>
+                                </div>
+                            </div>
+                            ${statsHtml}
+                        </div>
+                    `;
+                }).join('');
+            } catch (error) {
+                document.getElementById('error').textContent = 'Failed to fetch containers: ' + error.message;
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        // Initial load
+        fetchSystemInfo();
+        fetchContainers();
+
+        // Refresh every 5 seconds
+        setInterval(() => {
+            fetchSystemInfo();
+            fetchContainers();
+        }, 5000);
+    </script>
+</body>
+</html>
